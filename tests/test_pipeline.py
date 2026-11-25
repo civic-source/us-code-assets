@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from publisher import protocol as p
@@ -16,7 +17,7 @@ class PipelineControls(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.request, self.machine, _, _ = fixture(self.root)
+        self.request, self.machine, _, _ = fixture(self.root, context=True)
         self.raw = {'request.json': (p.canonical(self.request) + '\n').encode(), 'publication.json': self.machine,
                     'main.tar.gz': (self.root / 'main.tar.gz').read_bytes(), 'assets.tar.gz': (self.root / 'assets.tar.gz').read_bytes()}
         self.reader = Reader(self.request)
@@ -41,6 +42,8 @@ class PipelineControls(unittest.TestCase):
         proof = cli.proof_at(result['proofPath'], result['proofSha256'])
         self.assertEqual(proof['result']['scope'], 'complete-main-and-assets-archive-closure')
         self.assertEqual(proof['request'], self.request)
+        self.assertEqual(proof['result']['publicationContext']['locator'], self.request['locator'])
+        self.assertEqual(proof['result']['retainedLocators'], {})
         self.assertLess((self.root / 'download/proof.json').stat().st_size, 65536)
         with self.assertRaises(ValueError):
             cli.proof_at(result['proofPath'], 'f' * 64)
@@ -91,3 +94,22 @@ class PipelineControls(unittest.TestCase):
             p.request(raw)
         with self.assertRaises(ValueError):
             p.strict_json(b'{"sourceRunAttempt":1,"sourceRunAttempt":2}')
+
+    def test_predeploy_rechecks_live_context_and_strict_internal_proof_evidence(self):
+        result = self.prepare()
+        args = SimpleNamespace(action='predeploy', proof=Path(result['proofPath']), proof_sha256=result['proofSha256'])
+        environment = {'GITHUB_SHA': 'b' * 40}
+        with patch.dict(os.environ, environment), patch('publisher.cli.PublicReader', return_value=self.reader):
+            self.assertEqual(cli.run_action(args)['state'], 'predeploy-gates-verified')
+            self.reader.context = {'schemaVersion': 'usct.static-publication-context/v1',
+                'locator': self.request['locator'], 'previousLocator': None}
+            with self.assertRaises(ValueError):
+                cli.run_action(args)
+            self.reader.context = None
+            forged = p.strict_json(args.proof.read_bytes())
+            forged['result']['retainedLocators'] = []
+            args.proof = self.root / 'forged-proof.json'
+            args.proof.write_bytes((p.canonical(forged) + '\n').encode())
+            args.proof_sha256 = p.sha256(args.proof.read_bytes())
+            with self.assertRaises(ValueError):
+                cli.run_action(args)

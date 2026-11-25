@@ -4,8 +4,9 @@ from pathlib import Path
 import urllib.error
 from publisher import protocol as p
 from publisher import safeio
+from publisher.context import live_context, measure_online_context
 from publisher.consumer import consume_publication, read_bytes
-from publisher.github import PublicReader, TRACKER, ASSETS, release, download_asset, source_proof, predecessor
+from publisher.github import PublicReader, TRACKER, ASSETS, release, download_asset, source_proof
 
 LIMITS = {'request.json': 65536, 'publication.json': p.MAX_MANIFEST_BYTES, 'main.tar.gz': 1_000_000_000, 'assets.tar.gz': 1_000_000_000}
 
@@ -58,7 +59,7 @@ def load_request(reader, request_id, directory):
     if ref.get('object', {}).get('type') != 'commit' or ref.get('object', {}).get('sha') != request['sourceCommitSha']:
         raise ValueError('Immutable release tag does not pin the protected source SHA')
     source_proof(reader, request)
-    predecessor(reader, request)
+    live_context(reader, request)
     return request, sizes
 
 
@@ -79,7 +80,7 @@ def prepare(work_dir, request_id=None, reader=None):
     machine = read_bytes(root, 'publication.json', p.MAX_MANIFEST_BYTES)
     result = consume_publication(request=request, machine_manifest=machine,
                                  main_archive=root / 'main.tar.gz', assets_archive=root / 'assets.tar.gz', output_dir=root / 'stage')
-    predecessor(reader, request)
+    result = measure_online_context(reader, request, result)
     proof = {'schemaVersion': 'usct.static-assets-proof/v1', 'request': request, 'result': result,
              'descriptor': result['descriptor'], 'bindingSha256': result['bindingSha256'], 'samples': result['samples']}
     proof_bytes = (p.canonical(proof) + '\n').encode()
