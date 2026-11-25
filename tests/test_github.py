@@ -3,6 +3,7 @@ import copy
 import tempfile
 from pathlib import Path
 import unittest
+import urllib.error
 from publisher.github import source_proof, predecessor, TRACKER, ASSETS
 from fixtures import fixture
 
@@ -29,9 +30,15 @@ class Reader:
                                          'event': 'push', 'status': 'completed', 'conclusion': 'success'},
         }
         self.current = None
+        self.context = None
 
     def api(self, path):
         return self.values[path]
+
+    def json(self, url, maximum=65536):
+        if self.context is None:
+            raise urllib.error.HTTPError(url, 404, 'Absent', {}, None)
+        return copy.deepcopy(self.context)
 
     def locator(self, request_id):
         return self.current

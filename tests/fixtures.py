@@ -28,7 +28,7 @@ def archive(path, files, extra=None):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def fixture(root):
+def fixture(root, *, context=False):
     identity = {'acceptedDataCommitSha': 'a' * 40, 'acceptedDataTag': 'pl-119-142', 'publicationId': 'pub-pl-119-142-aaaaaaaaaaaa'}
     receipt = encoded(dict(identity, schemaVersion='usct.publication-receipt/v1', trackerSubmodulePinSha='a' * 40,
                            validationPassed=True, requiredScopesComplete=True))
@@ -48,6 +48,9 @@ def fixture(root):
     assets = {f'g/{generation}/{path}': data for path, data in payload.items()}
     assets[f'g/{generation}/generation.json'] = encoded(descriptor)
     main = {'publication-receipt.json': receipt, 'static-assets.json': encoded(locator), 'index.html': b'<h1>Reader</h1>'}
+    if context:
+        main['static-publication-context.json'] = encoded({'schemaVersion': 'usct.static-publication-context/v1',
+            'locator': locator, 'previousLocator': None})
     machine = encoded({'schemaVersion': 'usct.static-assets-export/v1', 'sourceCommitSha': 'c' * 40, 'locator': locator,
                        'descriptor': descriptor, 'main': [row(path, data) for path, data in sorted(main.items())],
                        'assets': [row(path, data) for path, data in sorted(assets.items())], 'retention': []})

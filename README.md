@@ -25,6 +25,26 @@ candidate. Staging reserves 2 GiB and 10,000 free inodes, with checks before and
 during descriptor-pinned writes. Failed stages remain for reconciliation; inputs
 and live publication pointers are not overwritten by archive validation.
 
+Fresh online preparation requires the main-only `static-publication-context.json`
+marker with exactly `schemaVersion`, `locator`, and `previousLocator`. The live
+main writer authorizes the current generation and its distinct predecessor; the
+candidate must retain their complete publication bindings. A rebuild of the same
+generation preserves its predecessor. Initial publication requires actual 404
+responses for both live main metadata files. Successful null responses, missing
+context, mismatched bindings, and changed live state hold publication. Offline
+archive verification remains compatible with retained older archives.
+
+The existing SHA-pinned internal proof carries the measured `publicationContext`
+and `retainedLocators` inside `result`. Preparation measures them from fully
+verified archives; predeployment and receipt publication validate them against
+fresh live main metadata. Public request, receipt, locator and descriptor schemas
+retain their existing fields.
+
+Prepared Pages and proof artifacts use run-and-attempt names. Both publish-job
+consumers use the exact names exported by the successful prepare job. Rerunning
+all jobs produces new artifact names; rerunning only a failed publish job reuses
+the artifacts from its actual preparation attempt.
+
 ```sh
 python3 -m compileall -q publisher tests
 python3 -m unittest discover -s tests -v

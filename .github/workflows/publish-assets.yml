@@ -29,6 +29,8 @@ jobs:
       found: ${{ steps.prepare.outputs.found }}
       requestId: ${{ steps.prepare.outputs.requestId }}
       proofSha256: ${{ steps.prepare.outputs.proofSha256 }}
+      pagesArtifactName: ${{ steps.prepare.outputs.pagesArtifactName }}
+      proofArtifactName: ${{ steps.prepare.outputs.proofArtifactName }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,12 +55,13 @@ jobs:
         if: steps.prepare.outputs.found == 'true'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
+          name: ${{ steps.prepare.outputs.pagesArtifactName }}
           path: ${{ steps.prepare.outputs.assetsDir }}
       - name: Retain small externally pinned deployment proof
         if: steps.prepare.outputs.found == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: publication-proof
+          name: ${{ steps.prepare.outputs.proofArtifactName }}
           path: ${{ steps.prepare.outputs.proofPath }}
           if-no-files-found: error
           retention-days: 7
@@ -87,7 +90,8 @@ jobs:
       - name: Download publisher proof from this workflow only
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh run download "$GITHUB_RUN_ID" --repo civic-source/us-code-assets --name publication-proof --dir "$RUNNER_TEMP/assets-proof"
+          PROOF_ARTIFACT: ${{ needs.prepare.outputs.proofArtifactName }}
+        run: gh run download "$GITHUB_RUN_ID" --repo civic-source/us-code-assets --name "$PROOF_ARTIFACT" --dir "$RUNNER_TEMP/assets-proof"
       - name: Recheck exact protected source and current main predecessor
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,6 +100,8 @@ jobs:
       - name: Deploy verified retained asset project
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        with:
+          artifact_name: ${{ needs.prepare.outputs.pagesArtifactName }}
       - name: Verify public generation and publish separate immutable receipt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

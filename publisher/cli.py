@@ -3,14 +3,16 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
 import urllib.request
 from publisher import protocol as p
 from publisher.consumer import read_bytes
-from publisher.github import PublicReader, ASSETS, ASSET_BASE, NoRedirect, predecessor, source_proof, own_receipt_bytes, current_head
+from publisher.github import PublicReader, ASSETS, ASSET_BASE, NoRedirect, source_proof, own_receipt_bytes, current_head
 from publisher.pipeline import prepare
+from publisher.context import validate_online_context
 
 
 def proof_at(path, expected_hash):
@@ -23,6 +25,8 @@ def proof_at(path, expected_hash):
         raise ValueError('Unknown publisher proof schema')
     p.request(proof['request'])
     p.generation(proof['descriptor'], proof['request']['locator'])
+    if not isinstance(proof['result'], dict) or proof['result'].get('descriptor') != proof['descriptor']:
+        raise ValueError('Internal publisher descriptor proof differs')
     if not p.digest(proof['bindingSha256']):
         raise ValueError('Invalid publisher binding proof')
     return proof
@@ -70,11 +74,11 @@ def publish_receipt(proof, receipt_path):
     reader = PublicReader()
     current_head(reader, ASSETS, os.environ['GITHUB_SHA'])
     source_proof(reader, request)
-    predecessor(reader, request)
+    validate_online_context(reader, request, proof['result'])
     samples = verify_https(proof)
     current_head(reader, ASSETS, os.environ['GITHUB_SHA'])
     current_head(reader, 'civic-source/us-code-tracker', request['sourceCommitSha'])
-    predecessor(reader, request)
+    validate_online_context(reader, request, proof['result'])
     receipt = {'schemaVersion': 'usct.static-assets-ready/v1', 'requestId': request['requestId'],
                'locator': request['locator'], 'sourceCommitSha': request['sourceCommitSha'],
                'sourceRunId': request['sourceRunId'], 'sourceRunAttempt': request['sourceRunAttempt'],
@@ -99,14 +103,26 @@ def publish_receipt(proof, receipt_path):
     return receipt
 
 
+def artifact_names(run_id, attempt):
+    if (not isinstance(run_id, str) or not isinstance(attempt, str)
+            or re.fullmatch(r'[1-9][0-9]{0,15}', run_id) is None
+            or re.fullmatch(r'[1-9][0-9]{0,9}', attempt) is None):
+        raise ValueError('Invalid prepared workflow artifact identity')
+    suffix = run_id + '-' + attempt
+    return {'pagesArtifactName': 'github-pages-' + suffix, 'proofArtifactName': 'publication-proof-' + suffix}
+
+
 def workflow_outputs(result):
     output = os.environ.get('GITHUB_OUTPUT')
     if not output:
         return
+    values = dict(result)
+    if result['found']:
+        values.update(artifact_names(os.environ.get('GITHUB_RUN_ID'), os.environ.get('GITHUB_RUN_ATTEMPT')))
     lines = ['found=' + str(result['found']).lower()]
-    for key in ['requestId', 'generationId', 'assetsDir', 'proofPath', 'proofSha256']:
-        if key in result:
-            value = str(result[key])
+    for key in ['requestId', 'generationId', 'assetsDir', 'proofPath', 'proofSha256', 'pagesArtifactName', 'proofArtifactName']:
+        if key in values:
+            value = str(values[key])
             if '\n' in value or '\r' in value:
                 raise ValueError('Invalid workflow output')
             lines.append(key + '=' + value)
@@ -130,7 +146,7 @@ def run_action(args):
         return publish_receipt(proof, args.receipt)
     reader = PublicReader()
     source_proof(reader, proof['request'])
-    predecessor(reader, proof['request'])
+    validate_online_context(reader, proof['request'], proof['result'])
     current_head(reader, ASSETS, os.environ['GITHUB_SHA'])
     current_head(reader, 'civic-source/us-code-tracker', proof['request']['sourceCommitSha'])
     return {'state': 'predeploy-gates-verified', 'requestId': proof['request']['requestId']}
