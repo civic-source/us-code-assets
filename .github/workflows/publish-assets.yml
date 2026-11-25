@@ -1,0 +1,115 @@
+name: Publish verified static assets
+
+on:
+  schedule:
+    - cron: '7,12,17,22,27,32,37,42,47,52,57 * * * *'
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: 'Optional exact immutable request SHA-256; empty discovers a pending request'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-assets-pages
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      found: ${{ steps.prepare.outputs.found }}
+      requestId: ${{ steps.prepare.outputs.requestId }}
+      proofSha256: ${{ steps.prepare.outputs.proofSha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Verify publisher source controls
+        run: python -m unittest discover -s tests -v
+      - name: Consume protected immutable publication request
+        id: prepare
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUEST_ID: ${{ inputs.request_id }}
+        run: |
+          args=(prepare --work-dir "$RUNNER_TEMP/assets-publication-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT")
+          if [ -n "$REQUEST_ID" ]; then args+=(--request-id "$REQUEST_ID"); fi
+          python -m publisher.cli "${args[@]}"
+      - name: Upload verified complete asset tree
+        if: steps.prepare.outputs.found == 'true'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ${{ steps.prepare.outputs.assetsDir }}
+      - name: Retain small externally pinned deployment proof
+        if: steps.prepare.outputs.found == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publication-proof
+          path: ${{ steps.prepare.outputs.proofPath }}
+          if-no-files-found: error
+          retention-days: 7
+  publish-assets:
+    if: needs.prepare.outputs.found == 'true' && github.ref == 'refs/heads/main'
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Download publisher proof from this workflow only
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh run download "$GITHUB_RUN_ID" --repo civic-source/us-code-assets --name publication-proof --dir "$RUNNER_TEMP/assets-proof"
+      - name: Recheck exact protected source and current main predecessor
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROOF_SHA: ${{ needs.prepare.outputs.proofSha256 }}
+        run: python -m publisher.cli predeploy --proof "$RUNNER_TEMP/assets-proof/proof.json" --proof-sha256 "$PROOF_SHA"
+      - name: Deploy verified retained asset project
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      - name: Verify public generation and publish separate immutable receipt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROOF_SHA: ${{ needs.prepare.outputs.proofSha256 }}
+        run: python -m publisher.cli receipt --proof "$RUNNER_TEMP/assets-proof/proof.json" --proof-sha256 "$PROOF_SHA" --receipt "$RUNNER_TEMP/assets-proof/receipt.json"
+      - name: Bind asset receipt ${{ needs.prepare.outputs.requestId }}
+        env:
+          REQUEST_ID: ${{ needs.prepare.outputs.requestId }}
+        run: |
+          python - <<'PY'
+          import os
+          from publisher.protocol import digest
+          identity = os.environ['REQUEST_ID']
+          if not digest(identity):
+              raise ValueError('Invalid receipt bind identity')
+          print('Bound asset receipt ' + identity)
+          PY
