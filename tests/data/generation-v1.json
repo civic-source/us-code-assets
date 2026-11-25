@@ -1,0 +1,21 @@
+{
+  "provenance": "Actual TypeScript generationDigest from reviewed packager commit2b3b393; synthetic bytes, not legal data",
+  "payload": [
+    {
+      "path": "pagefind/pagefind.js",
+      "byteLength": 2,
+      "sha256": "16cedf80ade01c62bdd1ae931d0492330c0b62bf294c08c095ce2fab21a9298d"
+    },
+    {
+      "path": "diffs/a.json.gz",
+      "byteLength": 3,
+      "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    },
+    {
+      "path": "diffs/B.json.gz",
+      "byteLength": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "generationId": "995cea46c1ce06396104190ea4ededb1c47c5a2501153784199bab74901eccdc"
+}
